@@ -1,202 +1,174 @@
-﻿using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Logging;
-
-using System;
+﻿using System;
 using System.Collections.Generic;
-using System.Diagnostics;
+using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
+using Sat.Recruitment.Api.Models;
+using Sat.Recruitment.Core;
+using Sat.Recruitment.Core.Domain;
+using Sat.Recruitment.Core.Services;
 
 namespace Sat.Recruitment.Api.Controllers
 {
-    public class Result
+    public partial class UsersController : Controller
     {
-        public bool IsSuccess { get; set; }
-        public string Errors { get; set; }
-    }
+        #region Fields
 
-    [ApiController]
-    [Route("[controller]")]
-    public partial class UsersController : ControllerBase
-    {
+        private readonly ILogger<UsersController> _logger;
+        private readonly IUserService _userService;
 
-        private readonly List<User> _users = new List<User>();
-        public UsersController()
+        #endregion
+
+        #region Utilities
+
+        /// <summary>
+        /// Returns a common error request result
+        /// </summary>
+        /// <param name="e">The exception</param>
+        /// <returns>
+        /// The action result to be retorned to the client
+        /// </returns>
+        protected IActionResult RequestErrorResult(Exception e)
         {
+            _logger.LogError(e.Message);
+            return BadRequest(new RequestResultModel<string>
+            {
+                ErrorMessage = e.Message,
+                IsSuccess = false
+            });
+        }
+
+        #endregion
+
+        #region Ctor
+
+        public UsersController(ILogger<UsersController> logger,
+            IUserService userService)
+        {
+            _logger = logger;
+            _userService = userService;
+        }
+
+        #endregion
+
+        #region Methods
+
+        [HttpGet]
+        public async Task<IActionResult> GetAllUsers()
+        {
+            try
+            {
+                return Ok(new RequestResultModel<IList<User>>
+                {
+                    Result = await _userService.GetAllUsersAsync(),
+                    IsSuccess = true
+                });
+            }
+            catch (Exception e)
+            {
+                return RequestErrorResult(e);
+            }
         }
 
         [HttpPost]
-        [Route("/create-user")]
-        public async Task<Result> CreateUser(string name, string email, string address, string phone, string userType, string money)
+        public async Task<IActionResult> DeleteUser(string email)
         {
-            var errors = "";
-
-            ValidateErrors(name, email, address, phone, ref errors);
-
-            if (errors != null && errors != "")
-                return new Result()
-                {
-                    IsSuccess = false,
-                    Errors = errors
-                };
-
-            var newUser = new User
-            {
-                Name = name,
-                Email = email,
-                Address = address,
-                Phone = phone,
-                UserType = userType,
-                Money = decimal.Parse(money)
-            };
-
-            if (newUser.UserType == "Normal")
-            {
-                if (decimal.Parse(money) > 100)
-                {
-                    var percentage = Convert.ToDecimal(0.12);
-                    //If new user is normal and has more than USD100
-                    var gif = decimal.Parse(money) * percentage;
-                    newUser.Money = newUser.Money + gif;
-                }
-                if (decimal.Parse(money) < 100)
-                {
-                    if (decimal.Parse(money) > 10)
-                    {
-                        var percentage = Convert.ToDecimal(0.8);
-                        var gif = decimal.Parse(money) * percentage;
-                        newUser.Money = newUser.Money + gif;
-                    }
-                }
-            }
-            if (newUser.UserType == "SuperUser")
-            {
-                if (decimal.Parse(money) > 100)
-                {
-                    var percentage = Convert.ToDecimal(0.20);
-                    var gif = decimal.Parse(money) * percentage;
-                    newUser.Money = newUser.Money + gif;
-                }
-            }
-            if (newUser.UserType == "Premium")
-            {
-                if (decimal.Parse(money) > 100)
-                {
-                    var gif = decimal.Parse(money) * 2;
-                    newUser.Money = newUser.Money + gif;
-                }
-            }
-
-
-            var reader = ReadUsersFromFile();
-
-            //Normalize email
-            var aux = newUser.Email.Split(new char[] { '@' }, StringSplitOptions.RemoveEmptyEntries);
-
-            var atIndex = aux[0].IndexOf("+", StringComparison.Ordinal);
-
-            aux[0] = atIndex < 0 ? aux[0].Replace(".", "") : aux[0].Replace(".", "").Remove(atIndex);
-
-            newUser.Email = string.Join("@", new string[] { aux[0], aux[1] });
-
-            while (reader.Peek() >= 0)
-            {
-                var line = reader.ReadLineAsync().Result;
-                var user = new User
-                {
-                    Name = line.Split(',')[0].ToString(),
-                    Email = line.Split(',')[1].ToString(),
-                    Phone = line.Split(',')[2].ToString(),
-                    Address = line.Split(',')[3].ToString(),
-                    UserType = line.Split(',')[4].ToString(),
-                    Money = decimal.Parse(line.Split(',')[5].ToString()),
-                };
-                _users.Add(user);
-            }
-            reader.Close();
             try
             {
-                var isDuplicated = false;
-                foreach (var user in _users)
-                {
-                    if (user.Email == newUser.Email
-                        ||
-                        user.Phone == newUser.Phone)
-                    {
-                        isDuplicated = true;
-                    }
-                    else if (user.Name == newUser.Name)
-                    {
-                        if (user.Address == newUser.Address)
-                        {
-                            isDuplicated = true;
-                            throw new Exception("User is duplicated");
-                        }
-
-                    }
-                }
-
-                if (!isDuplicated)
-                {
-                    Debug.WriteLine("User Created");
-
-                    return new Result()
-                    {
-                        IsSuccess = true,
-                        Errors = "User Created"
-                    };
-                }
-                else
-                {
-                    Debug.WriteLine("The user is duplicated");
-
-                    return new Result()
+                if (!CommonHelper.IsValidEmail(email))
+                    return Ok(new RequestResultModel<string>
                     {
                         IsSuccess = false,
-                        Errors = "The user is duplicated"
-                    };
-                }
-            }
-            catch
-            {
-                Debug.WriteLine("The user is duplicated");
-                return new Result()
+                        ErrorMessage = "Please provide a valid email"
+                    });
+
+                var user = await _userService.GetUserByEmailAsync(email);
+                if (user == null)
+                    return Ok(new RequestResultModel<string>
+                    {
+                        IsSuccess = false,
+                        ErrorMessage = $"User with email {email} cannot be found"
+                    });
+
+                await _userService.DeleteUserAsync(user);
+                return Ok(new RequestResultModel<string>
                 {
-                    IsSuccess = false,
-                    Errors = "The user is duplicated"
-                };
+                    IsSuccess = true,
+                    Result = $"User {email} has been deleted successfully"
+                });
             }
-
-            return new Result()
+            catch (Exception e)
             {
-                IsSuccess = true,
-                Errors = "User Created"
-            };
+                return RequestErrorResult(e);
+            }
         }
 
-        //Validate errors
-        private void ValidateErrors(string name, string email, string address, string phone, ref string errors)
+        [HttpPost]
+        public async Task<IActionResult> CreateUser([FromBody]UserModel model)
         {
-            if (name == null)
-                //Validate if Name is null
-                errors = "The name is required";
-            if (email == null)
-                //Validate if Email is null
-                errors = errors + " The email is required";
-            if (address == null)
-                //Validate if Address is null
-                errors = errors + " The address is required";
-            if (phone == null)
-                //Validate if Phone is null
-                errors = errors + " The phone is required";
+            try
+            {
+                if (!ModelState.IsValid)
+                    return Ok(new RequestResultModel<object>
+                    {
+                        IsSuccess = false,
+                        ErrorMessage = string.Join(". ", ModelState.SelectMany(x => x.Value.Errors).Select(x => x.ErrorMessage))
+                    });
+
+                if (!CommonHelper.IsValidEmail(model.Email))
+                    return Ok(new RequestResultModel<string>
+                    {
+                        IsSuccess = false,
+                        ErrorMessage = "Please provide a valid email"
+                    });
+
+                if (model.UserTypeId < 1 || model.UserTypeId > 3)
+                    return Ok(new RequestResultModel<string>
+                    {
+                        IsSuccess = false,
+                        ErrorMessage = "Please provide a valid user type ID (1.-Normal, 2.-SuperUser, 3.-Premium)"
+                    });
+
+                var gif = (UserType)model.UserTypeId switch
+                {
+                    UserType.SuperUser => model.Money > 100 ? model.Money * (model.Money > 100 ? 0.20M : 0) : 0,
+                    UserType.Premium => model.Money > 100 ? model.Money * 2 : 0,
+                    _ => model.Money * (model.Money > 100 ? 0.12M : model.Money < 100 && model.Money > 10 ? 0.8M : 0),
+                };
+
+                var users = await _userService.GetAllUsersAsync();
+                if (users.Any(x => x.Email == model.Email || x.Phone == model.Phone || (x.Name == model.Name && x.Address == model.Address)))
+                    return Ok(new RequestResultModel<string>
+                    {
+                        IsSuccess = false,
+                        ErrorMessage = "Cannot insert duplicated users"
+                    });
+
+                var user = new User
+                {
+                    Money = model.Money + gif,
+                    Address = model.Address,
+                    Email = model.Email,
+                    Name = model.Name,
+                    Phone = model.Phone,
+                    UserTypeId = model.UserTypeId.Value,
+                };
+
+                await _userService.InsertUserAsync(user);
+
+                return Ok(new RequestResultModel<string>
+                {
+                    IsSuccess = true,
+                    Result = $"User {user.Email} has been created successfully"
+                });
+            }
+            catch (Exception e)
+            {
+                return RequestErrorResult(e);
+            }
         }
-    }
-    public class User
-    {
-        public string Name { get; set; }
-        public string Email { get; set; }
-        public string Address { get; set; }
-        public string Phone { get; set; }
-        public string UserType { get; set; }
-        public decimal Money { get; set; }
+
+        #endregion
     }
 }
