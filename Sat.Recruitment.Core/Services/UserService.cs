@@ -82,7 +82,7 @@ namespace Sat.Recruitment.Core.Services
         /// </returns>
         public async Task<User> GetUserByEmailAsync(string email)
         {
-            return (await GetAllUsersAsync()).FirstOrDefault(x => x.Email.ToUpperInvariant().Trim() == email.ToUpperInvariant().Trim());
+            return (await GetAllUsersAsync())?.FirstOrDefault(x => x.Email.ToUpperInvariant().Trim() == email.ToUpperInvariant().Trim());
         }
 
         /// <summary>
